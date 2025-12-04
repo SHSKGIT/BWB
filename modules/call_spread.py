@@ -1,6 +1,7 @@
 import pandas as pd
 from config import get_logger
 from itertools import combinations
+from typing import List, cast
 
 logger = get_logger(__name__)
 
@@ -52,14 +53,20 @@ class BrokenWingButterfly:
             logger.warning(f"No call options found for {ticker} expiring on {expiry}")
             return pd.DataFrame()
 
-        # Sort by strike, and filter out duplicate strikes
+        # Ensure strikes are numeric
         filtered_df["strike"] = pd.to_numeric(filtered_df["strike"])
+
+        # Explicitly cast to DataFrame for type checkers
+        filtered_df = cast(pd.DataFrame, filtered_df)
         filtered_df = filtered_df.dropna(subset=["strike"])
+
+        # Sort by strike, and filter out duplicate strikes
         filtered_df = filtered_df.sort_values(by="strike").drop_duplicates(
             subset=["strike"]
         )
-        # convert to list for combinations
-        strikes = filtered_df["strike"].tolist()
+
+        # convert to list for combinations and ensure type checker knows they are floats
+        strikes = cast(List[float], filtered_df["strike"].tolist())
 
         # Create a lookup for price (mid) by strike, ex: {95: 10.50, 100: 7.20, 120: 4.80}
         strike_price_map = filtered_df.set_index("strike")["mid"].to_dict()
@@ -168,4 +175,4 @@ class BrokenWingButterfly:
         logger.info(
             f"Filtered spreads from {len(spreads_df)} to {len(filtered_spreads_df)}"
         )
-        return filtered_spreads_df
+        return cast(pd.DataFrame, filtered_spreads_df)
