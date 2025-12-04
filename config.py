@@ -1,0 +1,8 @@
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+
+
+def get_logger(name: str) -> logging.Logger:
+    return logging.getLogger(name)
