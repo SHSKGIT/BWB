@@ -53,7 +53,11 @@ class BrokenWingButterfly:
             return pd.DataFrame()
 
         # Sort by strike, and filter out duplicate strikes
-        filtered_df = filtered_df.sort_values("strike").drop_duplicates("strike")
+        filtered_df["strike"] = pd.to_numeric(filtered_df["strike"])
+        filtered_df = filtered_df.dropna(subset=["strike"])
+        filtered_df = filtered_df.sort_values(by="strike").drop_duplicates(
+            subset=["strike"]
+        )
         # convert to list for combinations
         strikes = filtered_df["strike"].tolist()
 
