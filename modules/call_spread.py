@@ -232,7 +232,8 @@ class BrokenWingButterflyCallSpread:
             "score",
         ]
 
-        # Sorting
+        # Sorting by column score, descending order
         sorted_df = df.sort_values(by=sort_by, ascending=ascending)
 
-        return sorted_df[cols_to_return]
+        # if return sorted_df, type checker will fail, so have to use cast to guarantee the return type must be pd.DataFrame
+        return cast(pd.DataFrame, sorted_df[cols_to_return])
