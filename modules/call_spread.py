@@ -6,7 +6,7 @@ from typing import List, cast
 logger = get_logger(__name__)
 
 
-class BrokenWingButterfly:
+class BrokenWingButterflyCallSpread:
     """
     Constructs Broken Wing Butterfly (BWB) call spreads.
 
@@ -168,11 +168,71 @@ class BrokenWingButterfly:
         # Filter by Minimum Net Credit
         # Cost < 0 means credit. Credit = -Cost.
         # I want Credit >= min_credit -> -Cost >= min_credit -> Cost <= -min_credit
+        # Use a small epsilon for floating point comparison robustness, ex: 0.4999999 -> 0.50 If not, this spread will be filtered out.
+        epsilon = 1e-9
         filtered_spreads_df = filtered_spreads_df[
-            filtered_spreads_df["cost"] <= -min_credit
+            filtered_spreads_df["cost"] <= (-min_credit + epsilon)
         ]
 
         logger.info(
             f"Filtered spreads from {len(spreads_df)} to {len(filtered_spreads_df)}"
         )
         return cast(pd.DataFrame, filtered_spreads_df)
+
+    def rank_spreads(
+        self,
+        spreads_df: pd.DataFrame,
+        sort_by: str = "score",
+        ascending: bool = False,
+    ) -> pd.DataFrame:
+        """
+        Rank the candidate BWBs by a score.
+
+        Score = Max Profit / Max Loss
+
+        Args:
+            spreads_df (pd.DataFrame): The DataFrame of spreads (either filtered or unfiltered).
+            sort_by (str): Column to sort by. Default is "score".
+            ascending (bool): Sort order. Default is False (descending order).
+
+        Returns:
+            pd.DataFrame: Sorted DataFrame with columns:
+                          [symbol, expiry, k1, k2, k3, credit, max_profit, max_loss, score]
+        """
+        if spreads_df.empty:
+            return pd.DataFrame()
+
+        df = spreads_df.copy()
+
+        # Calculate Credit (-Cost)
+        df["credit"] = -df["cost"]
+
+        # Max Profit = Width of first wing + Net Credit, at around K2
+        df["max_profit"] = df["width1"] + df["credit"]
+
+        # Max Loss, at above K3.
+        # Loss = (Width2 - Width1) - Credit
+        # If the result is negative (i.e. it's still profitable), Max Loss is 0.
+        df["max_loss"] = (df["width2"] - df["width1"] - df["credit"]).clip(lower=0)
+
+        # Score = Max Profit / Max Loss
+        # Pandas handles zero division error, it won't raise ZeroDivisionError. It will return NaN.
+        df["score"] = df["max_profit"] / df["max_loss"]
+
+        # Select columns to return
+        cols_to_return = [
+            "symbol",
+            "expiry",
+            "k1",
+            "k2",
+            "k3",
+            "credit",
+            "max_profit",
+            "max_loss",
+            "score",
+        ]
+
+        # Sorting
+        sorted_df = df.sort_values(by=sort_by, ascending=ascending)
+
+        return sorted_df[cols_to_return]
