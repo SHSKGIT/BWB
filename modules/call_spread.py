@@ -8,7 +8,7 @@ logger = get_logger(__name__)
 
 class BrokenWingButterflyCallSpread:
     """
-    Constructs Broken Wing Butterfly (BWB) call spreads.
+    Constructs Broken Wing Butterfly (BWB) call spreads, including bull call spread (debit) and bear call spread (credit).
 
     Pattern:
     - Long 1 call at K1
@@ -32,15 +32,15 @@ class BrokenWingButterflyCallSpread:
         self, ticker: str, expiry: str | pd.Timestamp
     ) -> pd.DataFrame:
         """
-        Generate all valid BWB call spreads for a specific ticker and expiry.
-
-        Args:
-            ticker (str): The symbol to filter by.
-            expiry (str | pd.Timestamp): The expiration date to filter by.
+        Generate all valid BWB call spreads for a specific ticker and expiry. (unfiltered)
 
         Returns:
             pd.DataFrame: A DataFrame of valid BWB spreads with columns:
-                          [symbol, expiry, k1, k2, k3, width1, width2, net_credit/debit, dte, delta_k2]
+                          [symbol, expiry, dte, k1, k2, k3, width1, width2, cost(net_credit/debit), price_k1, price_k2, price_k3, delta_k2]
+
+                          width1, width2 are used to calculate max profit and max loss.
+                          cost is used to calculate credit.
+                          delta_k2 is used to filter spreads by short strike delta.
         """
         # Filter data for specific ticker, expiry, and call options
         filtered_df = self.df[
@@ -56,7 +56,7 @@ class BrokenWingButterflyCallSpread:
         # Ensure strikes are numeric
         filtered_df["strike"] = pd.to_numeric(filtered_df["strike"])
 
-        # Explicitly cast to DataFrame for type checkers
+        # Explicitly cast to DataFrame for type checkers, and remove rows with missing strike (empty value)
         filtered_df = cast(pd.DataFrame, filtered_df)
         filtered_df = filtered_df.dropna(subset=["strike"])
 
@@ -68,9 +68,9 @@ class BrokenWingButterflyCallSpread:
         # convert to list for combinations and ensure type checker knows they are floats
         strikes = cast(List[float], filtered_df["strike"].tolist())
 
-        # Create a lookup for price (mid) by strike, ex: {95: 10.50, 100: 7.20, 120: 4.80}
+        # Create a lookup for price (mid) by strike, use mid price (bid+ask)/2 is for fair value, ex: {95: 10.50, 100: 7.20, 105: 4.85, 110: 3.15, 115: 1.95, 120: 1.15}
         strike_price_map = filtered_df.set_index("strike")["mid"].to_dict()
-        # Create lookup for delta by strike for filtering
+        # Create lookup for delta by strike for filtering, ex: {95: 0.40, 100: 0.30, 105: 0.20, 110: 0.15, 115: 0.10, 120: 0.08}
         strike_delta_map = filtered_df.set_index("strike")["delta"].to_dict()
 
         # Get DTE from the first row (expiry is the same for all rows)
@@ -95,9 +95,10 @@ class BrokenWingButterflyCallSpread:
             p2 = strike_price_map[k2]
             p3 = strike_price_map[k3]
 
-            delta_k2 = strike_delta_map[k2]
-
             cost = p1 - (2 * p2) + p3
+
+            # short strike delta is at K2, this is used for filtering spreads, just prepare upfront
+            delta_k2 = strike_delta_map[k2]
 
             spreads.append(
                 {
@@ -137,13 +138,13 @@ class BrokenWingButterflyCallSpread:
         - Minimum net credit (e.g. ≥ $0.50)
         - Short strike delta between 0.20 and 0.35
 
-        Args:
-            spreads_df (pd.DataFrame): The DataFrame of generated spreads.
-            min_credit (float): Minimum net credit required (default: 0.50).
-            min_dte (int): Minimum days to expiration (default: 1).
-            max_dte (int): Maximum days to expiration (default: 10).
-            min_short_delta (float): Minimum delta for the short strike (K2) (default: 0.20).
-            max_short_delta (float): Maximum delta for the short strike (K2) (default: 0.35).
+        delta is the risk/sensitivity for each spread here, the higher the delta, the more sensitive (higher risk) the option is to the underlying price changes.
+        ex: assuming delta is 0.50, if the stock price goes up 1, then the option price will go up 0.50. This is a medium risk spread.
+        if delta < 0.20, it's very low risk, if the stock price goes up 1, then the option price will go up 0.20. Stock is unlikely to hit it, very safe, but premium is very little.
+        if delta > 0.35, it's very high risk, if the stock price goes up 1, then the option price will go up 0.35. Stock is very likely to hit it, very risky, but premium is very high.
+        if 0.20 <= delta <= 0.35, it's a medium risk. Stock is likely to hit it, medium risk, and premium is moderate.
+        ex: assuming current AAPL stock price is $100, looking at options expiring in 30days, strike is $130 call, delta is 0.05, premuim (option price) is $0.10
+        market thinks there is only 5% chance AAPL will be above $130 in 30days. If AAPL moves from $100 to $101, premium will be $0.10 + $0.05 = $0.15, if sell the option now, only collect $0.10 * 100 = $10, loss $0.15 * 100 = $15.
 
         Returns:
             pd.DataFrame: The filtered DataFrame.
@@ -166,9 +167,9 @@ class BrokenWingButterflyCallSpread:
         ]
 
         # Filter by Minimum Net Credit
-        # Cost < 0 means credit. Credit = -Cost.
+        # Cost < 0 means credit. Credit = -Cost
         # I want Credit >= min_credit -> -Cost >= min_credit -> Cost <= -min_credit
-        # Use a small epsilon for floating point comparison robustness, ex: 0.4999999 -> 0.50 If not, this spread will be filtered out.
+        # Use a small epsilon for floating point comparison robustness, ex: 0.4999999 -> 0.50 If not, this spread will be filtered out, but it should not.
         epsilon = 1e-9
         filtered_spreads_df = filtered_spreads_df[
             filtered_spreads_df["cost"] <= (-min_credit + epsilon)
@@ -177,6 +178,8 @@ class BrokenWingButterflyCallSpread:
         logger.info(
             f"Filtered spreads from {len(spreads_df)} to {len(filtered_spreads_df)}"
         )
+
+        # type checker requires cast to avoid ambiguous return type, could be Series or DataFrame. Due to this is slice operations, need to avoid overhead of copying it with DataFrame. Cast doesn't take memory.
         return cast(pd.DataFrame, filtered_spreads_df)
 
     def rank_spreads(
@@ -202,12 +205,13 @@ class BrokenWingButterflyCallSpread:
         if spreads_df.empty:
             return pd.DataFrame()
 
+        # copy the dataframe to avoid modifying the original dataframe which may be used outside of this function
         df = spreads_df.copy()
 
         # Calculate Credit (-Cost)
         df["credit"] = -df["cost"]
 
-        # Max Profit = Width of first wing + Net Credit, at around K2
+        # Max Profit = Width of first wing + Net Credit, at K2
         df["max_profit"] = df["width1"] + df["credit"]
 
         # Max Loss, at above K3.
@@ -235,5 +239,5 @@ class BrokenWingButterflyCallSpread:
         # Sorting by column score, descending order
         sorted_df = df.sort_values(by=sort_by, ascending=ascending)
 
-        # if return sorted_df, type checker will fail, so have to use cast to guarantee the return type must be pd.DataFrame
+        # if return sorted_df, type checker will fail, so have to use cast to guarantee the return type must be pd.DataFrame, the same reason as filter_spreads
         return cast(pd.DataFrame, sorted_df[cols_to_return])
