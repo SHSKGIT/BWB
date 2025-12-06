@@ -124,3 +124,11 @@ pytest tests/test_bwb.py::test_generate_call_spreads
 pytest tests/test_bwb.py::test_filter_spreads
 pytest tests/test_bwb.py::test_rank_spreads
 ```
+
+### Future integration
+
+1. Use external API to fetch real-time options chain data.
+
+2. Store historical options data into a DB.
+
+3. Create a UI containing a chart to show profit and loss with dates before expiry. This will be integrated into a web server.
