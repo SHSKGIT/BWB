@@ -69,7 +69,21 @@ filtered_spreads = bwb.filter_spreads(call_spreads)
 ranked_spread = bwb.rank_spreads(filtered_spreads)
 ```
 
-The ranked spread should look like this:
+The filtered spreads should look like this:
+
+```
+>>> filtered_spreads
+   symbol      expiry  dte   k1   k2   k3  width1  width2  cost  price_k1  price_k2  price_k3  delta_k2
+0    AAPL  2025-11-15    9   95  100  110       5      10  -0.8     10.55      7.25      3.15       0.3
+1    AAPL  2025-11-15    9   95  100  115       5      15  -2.0     10.55      7.25      1.95       0.3
+2    AAPL  2025-11-15    9   95  100  120       5      20  -2.8     10.55      7.25      1.15       0.3
+3    AAPL  2025-11-15    9   95  100  125       5      25  -3.3     10.55      7.25      0.65       0.3
+12   AAPL  2025-11-15    9  100  105  115       5      10  -0.5      7.25      4.85      1.95       0.2
+13   AAPL  2025-11-15    9  100  105  120       5      15  -1.3      7.25      4.85      1.15       0.2
+14   AAPL  2025-11-15    9  100  105  125       5      20  -1.8      7.25      4.85      0.65       0.2
+```
+
+The ranked spreads (descending order by score column) should look like this:
 
 ```
 >>> ranked_spread
