@@ -2,6 +2,7 @@ import pandas as pd
 from config import get_logger
 from itertools import combinations
 from typing import List, cast
+import numpy as np
 
 logger = get_logger(__name__)
 
@@ -16,15 +17,45 @@ class BrokenWingButterflyCallSpread:
     - Long 1 call at K3
 
     Where K1 < K2 < K3 and (K2 - K1) != (K3 - K2)
+
+    CRITICAL ASSUMPTIONS:
+    - Calculations assume expiration-only (no early assignment risk)
+    - Max Loss assumes stock price >> K3 (worst case scenario)
+    - Max Profit assumes stock price = K2 exactly (best case scenario)
+
+    LIMITATIONS:
+    - Does not account for transaction costs
+    - Does not account for slippage
+    - Does not account for early assignment risk
     """
 
     def __init__(self, df: pd.DataFrame):
         """
         Initialize with options chain data.
-
-        Args:
-            df (pd.DataFrame): Options chain data containing strike, type, expiry, etc.
         """
+        if df.empty:
+            error_msg = "DataFrame cannot be empty"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        required_cols = [
+            "symbol",
+            "expiry",
+            "dte",
+            "strike",
+            "type",
+            "bid",
+            "ask",
+            "mid",
+            "delta",
+            "iv",
+        ]
+        missing = set(required_cols) - set(df.columns)
+        if missing:
+            error_msg = f"DataFrame missing required columns: {missing}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
         self.df = df
 
     # This method is combined bull call spread (buy 1 call at k1 and sell 1 call at k2) and bear call spread (sell 1 call at k1 and buy 1 call at k2), which means buy 1 call at K1, sell 2 calls at K2, and buy 1 call at K3
@@ -42,9 +73,19 @@ class BrokenWingButterflyCallSpread:
                           cost is used to calculate credit.
                           delta_k2 is used to filter spreads by short strike delta.
         """
+        if not ticker or not isinstance(ticker, str):
+            error_msg = f"Ticker must be a non-empty string. Got: {ticker}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        if not expiry:
+            error_msg = f"Expiry must be provided. Got: {expiry}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
         # Filter data for specific ticker, expiry, and call options
         filtered_df = self.df[
-            (self.df["symbol"] == ticker)
+            (self.df["symbol"] == ticker.upper())
             & (self.df["expiry"] == pd.to_datetime(expiry))
             & (self.df["type"] == "call")
         ].copy()
@@ -54,19 +95,39 @@ class BrokenWingButterflyCallSpread:
             return pd.DataFrame()
 
         # Ensure strikes are numeric
-        filtered_df["strike"] = pd.to_numeric(filtered_df["strike"])
+        filtered_df["strike"] = pd.to_numeric(filtered_df["strike"], errors="coerce")
 
         # Explicitly cast to DataFrame for type checkers, and remove rows with missing strike (empty value)
         filtered_df = cast(pd.DataFrame, filtered_df)
         filtered_df = filtered_df.dropna(subset=["strike"])
+
+        # Validate we have at least 3 strikes for combinations
+        if len(filtered_df) < 3:
+            logger.warning(
+                f"Insufficient strikes ({len(filtered_df)}) for BWB construction. Need at least 3."
+            )
+            return pd.DataFrame()
 
         # Sort by strike, and filter out duplicate strikes
         filtered_df = filtered_df.sort_values(by="strike").drop_duplicates(
             subset=["strike"]
         )
 
+        # Re-validate after deduplication
+        if len(filtered_df) < 3:
+            logger.warning(
+                f"Insufficient unique strikes ({len(filtered_df)}) for BWB construction. Need at least 3."
+            )
+            return pd.DataFrame()
+
         # convert to list for combinations and ensure type checker knows they are floats
         strikes = cast(List[float], filtered_df["strike"].tolist())
+
+        # Validate strikes are in ascending order
+        if strikes != sorted(strikes):
+            error_msg = "Strikes must be in ascending order"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
         # Create a lookup for price (mid) by strike, use mid price (bid+ask)/2 is for fair value, ex: {95: 10.50, 100: 7.20, 105: 4.85, 110: 3.15, 115: 1.95, 120: 1.15}
         strike_price_map = filtered_df.set_index("strike")["mid"].to_dict()
@@ -76,12 +137,30 @@ class BrokenWingButterflyCallSpread:
         # Get DTE from the first row (expiry is the same for all rows)
         current_dte = filtered_df["dte"].iloc[0]
 
+        # Validate DTE is consistent
+        if not (filtered_df["dte"] == current_dte).all():
+            error_msg = "DTE values are inconsistent for the same expiry"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
         spreads = []
 
         # Generate all combinations of 3 strikes (K1, K2, K3), and ensure 3 distinct strikes, and in order K1 < K2 < K3
         for k1, k2, k3 in combinations(strikes, 3):
+            # Validate strike order (should be guaranteed by combinations, but double-check)
+            if not (k1 < k2 < k3):
+                error_msg = f"Invalid strike order: {k1}, {k2}, {k3}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
             width1 = k2 - k1
             width2 = k3 - k2
+
+            # Validate widths are positive
+            if width1 <= 0 or width2 <= 0:
+                error_msg = f"Invalid widths: width1={width1}, width2={width2}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
 
             # Check for asymmetric wings (Broken Wing). Standard Butterfly has width1 == width2
             if width1 == width2:
@@ -95,14 +174,26 @@ class BrokenWingButterflyCallSpread:
             p2 = strike_price_map[k2]
             p3 = strike_price_map[k3]
 
+            # Validate prices exist and are non-negative
+            if p1 < 0 or p2 < 0 or p3 < 0:
+                error_msg = f"Invalid prices: p1={p1}, p2={p2}, p3={p3}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
             cost = p1 - (2 * p2) + p3
 
             # short strike delta is at K2, this is used for filtering spreads, just prepare upfront
             delta_k2 = strike_delta_map[k2]
 
+            # Validate delta is in valid range
+            if not (0 <= delta_k2 <= 1):
+                error_msg = f"Invalid delta_k2: {delta_k2}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
             spreads.append(
                 {
-                    "symbol": ticker,
+                    "symbol": ticker.upper(),
                     "expiry": expiry,
                     "dte": current_dte,
                     "k1": k1,
@@ -145,10 +236,33 @@ class BrokenWingButterflyCallSpread:
         if 0.20 <= delta <= 0.35, it's a medium risk. Stock is likely to hit it, medium risk, and premium is moderate.
         ex: assuming current AAPL stock price is $100, looking at options expiring in 30days, strike is $130 call, delta is 0.05, premuim (option price) is $0.10
         market thinks there is only 5% chance AAPL will be above $130 in 30days. If AAPL moves from $100 to $101, premium will be $0.10 + $0.05 = $0.15, if sell the option now, only collect $0.10 * 100 = $10, loss $0.15 * 100 = $15.
-
-        Returns:
-            pd.DataFrame: The filtered DataFrame.
         """
+        # Validate input parameters
+        if min_dte < 0 or max_dte < 0:
+            error_msg = f"DTE values must be non-negative. Got min_dte={min_dte}, max_dte={max_dte}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        if min_dte > max_dte:
+            error_msg = f"min_dte ({min_dte}) cannot exceed max_dte ({max_dte})"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        if (
+            min_short_delta < 0
+            or max_short_delta < 0
+            or min_short_delta > 1
+            or max_short_delta > 1
+        ):
+            error_msg = f"Delta values must be between 0 and 1. Got min={min_short_delta}, max={max_short_delta}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        if min_short_delta > max_short_delta:
+            error_msg = f"min_short_delta ({min_short_delta}) cannot exceed max_short_delta ({max_short_delta})"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
         if spreads_df.empty:
             return spreads_df
 
@@ -193,17 +307,25 @@ class BrokenWingButterflyCallSpread:
 
         Score = Max Profit / Max Loss
 
-        Args:
-            spreads_df (pd.DataFrame): The DataFrame of spreads (either filtered or unfiltered).
-            sort_by (str): Column to sort by. Default is "score".
-            ascending (bool): Sort order. Default is False (descending order).
-
         Returns:
             pd.DataFrame: Sorted DataFrame with columns:
                           [symbol, expiry, k1, k2, k3, credit, max_profit, max_loss, score]
         """
         if spreads_df.empty:
             return pd.DataFrame()
+
+        # Validate widths are non-negative
+        if (spreads_df["width1"] < 0).any() or (spreads_df["width2"] < 0).any():
+            invalid = (
+                spreads_df[(spreads_df["width1"] < 0) | (spreads_df["width2"] < 0)][
+                    ["width1", "width2"]
+                ]
+                .head()
+                .to_dict("records")
+            )
+            error_msg = f"Widths must be non-negative. Invalid rows: {invalid}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
         # copy the dataframe to avoid modifying the original dataframe which may be used outside of this function
         df = spreads_df.copy()
@@ -214,14 +336,43 @@ class BrokenWingButterflyCallSpread:
         # Max Profit = Width of first wing + Net Credit, at K2
         df["max_profit"] = df["width1"] + df["credit"]
 
+        # Validate max_profit is positive (should always be for valid spreads)
+        if (df["max_profit"] <= 0).any():
+            invalid = (
+                df[df["max_profit"] <= 0][["width1", "credit", "max_profit"]]
+                .head()
+                .to_dict("records")
+            )
+            error_msg = f"Max profit must be positive for valid spreads. Invalid rows: {invalid}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
         # Max Loss, at above K3.
         # Loss = (Width2 - Width1) - Credit
         # If the result is negative (i.e. it's still profitable), Max Loss is 0.
         df["max_loss"] = (df["width2"] - df["width1"] - df["credit"]).clip(lower=0)
 
+        # Validate max_loss is non-negative
+        if (df["max_loss"] < 0).any():
+            invalid = (
+                df[df["max_loss"] < 0][["width2", "width1", "credit", "max_loss"]]
+                .head()
+                .to_dict("records")
+            )
+            error_msg = f"Max loss cannot be negative. Invalid rows: {invalid}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
         # Score = Max Profit / Max Loss
         # Pandas handles zero division error, it won't raise ZeroDivisionError. It will return NaN.
         df["score"] = df["max_profit"] / df["max_loss"]
+
+        # Validate score is finite (handle division by zero for risk-free trades)
+        infinite_scores = df[~np.isfinite(df["score"])]
+        if not infinite_scores.empty:
+            logger.info(
+                f"Found {len(infinite_scores)} risk-free trades (infinite score)"
+            )
 
         # Select columns to return
         cols_to_return = [
@@ -235,6 +386,13 @@ class BrokenWingButterflyCallSpread:
             "max_loss",
             "score",
         ]
+
+        # Validate all return columns exist
+        missing_cols = set(cols_to_return) - set(df.columns)
+        if missing_cols:
+            error_msg = f"Missing columns for return: {missing_cols}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
         # Sorting by column score, descending order
         sorted_df = df.sort_values(by=sort_by, ascending=ascending)
