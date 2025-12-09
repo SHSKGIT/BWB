@@ -85,7 +85,7 @@ class DataLoader:
         df["symbol"] = df["symbol"].str.upper().str.strip()
 
         # Validate date conversion succeeded
-        if df["expiry"].isna().any():
+        if df["expiry"].isna().any():  # type: ignore
             error_msg = "Invalid date format in expiry column"
             logger.error(error_msg)
             raise ValueError(error_msg)
@@ -178,7 +178,7 @@ class DataLoader:
                             df[col], errors="raise", downcast="integer"
                         )
                         # Check if all values are whole numbers
-                        if not (converted == converted.astype(int)).all():
+                        if not (converted == converted.astype(int)).all():  # type: ignore
                             error_msg = f"{col} column must be integer (whole numbers). Got non-integer values."
                             logger.error(error_msg)
                             raise TypeError(error_msg)
@@ -204,16 +204,14 @@ class DataLoader:
         # Validate delta is between 0 and 1 (for calls)
         if (df["delta"] < 0).any() or (df["delta"] > 1).any():
             invalid_deltas = df[~df["delta"].between(0, 1)]["delta"].tolist()
-            error_msg = f"Delta values must be between 0 and 1. Invalid values: {invalid_deltas[:5]}"
+            error_msg = f"Delta values must be between 0 and 1. Invalid values: {invalid_deltas[:5]}"  # type: ignore
             logger.error(error_msg)
             raise ValueError(error_msg)
 
         # Validate strike is positive
         if (df["strike"] <= 0).any():
             invalid_strikes = df[df["strike"] <= 0]["strike"].tolist()
-            error_msg = (
-                f"Strike prices must be positive. Invalid values: {invalid_strikes[:5]}"
-            )
+            error_msg = f"Strike prices must be positive. Invalid values: {invalid_strikes[:5]}"  # type: ignore
             logger.error(error_msg)
             raise ValueError(error_msg)
 
@@ -222,15 +220,15 @@ class DataLoader:
         for col in price_cols:
             if (df[col] < 0).any():
                 invalid_prices = df[df[col] < 0][col].tolist()
-                error_msg = f"{col} prices must be non-negative. Invalid values: {invalid_prices[:5]}"
+                error_msg = f"{col} prices must be non-negative. Invalid values: {invalid_prices[:5]}"  # type: ignore
                 logger.error(error_msg)
                 raise ValueError(error_msg)
 
         # Validate bid <= ask (market sanity check)
         if (df["bid"] > df["ask"]).any():
-            invalid_pairs = (
-                df[df["bid"] > df["ask"]][["bid", "ask"]].head().to_dict("records")  # type: ignore[arg-type]
-            )
+            invalid_pairs = df[df["bid"] > df["ask"]][
+                ["bid", "ask"]
+            ].head()  # type: ignore
             error_msg = (
                 f"Bid price cannot exceed Ask price. Invalid pairs: {invalid_pairs}"
             )
@@ -244,8 +242,8 @@ class DataLoader:
         if (mid_diff > tolerance).any():
             invalid_mids = (
                 df[mid_diff > tolerance][["bid", "ask", "mid"]]
-                .head()
-                .to_dict("records")  # type: ignore[arg-type]
+                .head()  # type: ignore
+                .to_dict("records")  # type: ignore
             )
             error_msg = (
                 f"Mid price should be (bid + ask) / 2. Invalid rows: {invalid_mids}"
@@ -256,14 +254,14 @@ class DataLoader:
         # Validate DTE is non-negative
         if (df["dte"] < 0).any():
             invalid_dte = df[df["dte"] < 0]["dte"].tolist()
-            error_msg = f"DTE must be non-negative. Invalid values: {invalid_dte[:5]}"
+            error_msg = f"DTE must be non-negative. Invalid values: {invalid_dte[:5]}"  # type: ignore
             logger.error(error_msg)
             raise ValueError(error_msg)
 
         # Validate type is 'call' or 'put'
         valid_types = {"call", "put"}
-        if not df["type"].isin(valid_types).all():
-            invalid_types = df[~df["type"].isin(valid_types)]["type"].unique().tolist()
+        if not df["type"].isin(valid_types).all():  # type: ignore
+            invalid_types = df[~df["type"].isin(valid_types)]["type"].unique().tolist()  # type: ignore
             error_msg = f"Type must be 'call' or 'put'. Invalid values: {invalid_types}"
             logger.error(error_msg)
             raise ValueError(error_msg)

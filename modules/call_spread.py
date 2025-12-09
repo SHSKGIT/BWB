@@ -316,14 +316,8 @@ class BrokenWingButterflyCallSpread:
 
         # Validate widths are non-negative
         if (spreads_df["width1"] < 0).any() or (spreads_df["width2"] < 0).any():
-            invalid = (
-                spreads_df[(spreads_df["width1"] < 0) | (spreads_df["width2"] < 0)][
-                    ["width1", "width2"]
-                ]
-                .head()
-                .to_dict("records")  # type: ignore[arg-type]
-            )
-            error_msg = f"Widths must be non-negative. Invalid rows: {invalid}"
+            invalid_rows = spreads_df[(spreads_df["width1"] < 0) | (spreads_df["width2"] < 0)][["width1", "width2"]].iloc[:5].to_dict("records")  # type: ignore[arg-type]
+            error_msg = f"Widths must be non-negative. First up to 5 invalid rows: {invalid_rows}"
             logger.error(error_msg)
             raise ValueError(error_msg)
 
@@ -338,12 +332,8 @@ class BrokenWingButterflyCallSpread:
 
         # Validate max_profit is positive (should always be for valid spreads)
         if (df["max_profit"] <= 0).any():
-            invalid = (
-                df[df["max_profit"] <= 0][["width1", "credit", "max_profit"]]
-                .head()
-                .to_dict("records")  # type: ignore[arg-type]
-            )
-            error_msg = f"Max profit must be positive for valid spreads. Invalid rows: {invalid}"
+            invalid_rows = df[df["max_profit"] <= 0][["width1", "credit", "max_profit"]].iloc[:5].to_dict("records")  # type: ignore[arg-type]
+            error_msg = f"Max profit must be positive. First up to 5 invalid rows: {invalid_rows}"
             logger.error(error_msg)
             raise ValueError(error_msg)
 
@@ -354,12 +344,8 @@ class BrokenWingButterflyCallSpread:
 
         # Validate max_loss is non-negative
         if (df["max_loss"] < 0).any():
-            invalid = (
-                df[df["max_loss"] < 0][["width2", "width1", "credit", "max_loss"]]
-                .head()
-                .to_dict("records")  # type: ignore[arg-type]
-            )
-            error_msg = f"Max loss cannot be negative. Invalid rows: {invalid}"
+            invalid_rows = df[df["max_loss"] < 0][["width2", "width1", "credit", "max_loss"]].iloc[:5].to_dict("records")  # type: ignore[arg-type]
+            error_msg = f"Max loss cannot be negative. First up to 5 invalid rows: {invalid_rows}"
             logger.error(error_msg)
             raise ValueError(error_msg)
 
