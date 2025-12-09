@@ -321,7 +321,7 @@ class BrokenWingButterflyCallSpread:
                     ["width1", "width2"]
                 ]
                 .head()
-                .to_dict("records")
+                .to_dict("records")  # type: ignore[arg-type]
             )
             error_msg = f"Widths must be non-negative. Invalid rows: {invalid}"
             logger.error(error_msg)
@@ -341,7 +341,7 @@ class BrokenWingButterflyCallSpread:
             invalid = (
                 df[df["max_profit"] <= 0][["width1", "credit", "max_profit"]]
                 .head()
-                .to_dict("records")
+                .to_dict("records")  # type: ignore[arg-type]
             )
             error_msg = f"Max profit must be positive for valid spreads. Invalid rows: {invalid}"
             logger.error(error_msg)
@@ -357,7 +357,7 @@ class BrokenWingButterflyCallSpread:
             invalid = (
                 df[df["max_loss"] < 0][["width2", "width1", "credit", "max_loss"]]
                 .head()
-                .to_dict("records")
+                .to_dict("records")  # type: ignore[arg-type]
             )
             error_msg = f"Max loss cannot be negative. Invalid rows: {invalid}"
             logger.error(error_msg)

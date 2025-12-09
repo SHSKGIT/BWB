@@ -229,7 +229,7 @@ class DataLoader:
         # Validate bid <= ask (market sanity check)
         if (df["bid"] > df["ask"]).any():
             invalid_pairs = (
-                df[df["bid"] > df["ask"]][["bid", "ask"]].head().to_dict("records")
+                df[df["bid"] > df["ask"]][["bid", "ask"]].head().to_dict("records")  # type: ignore[arg-type]
             )
             error_msg = (
                 f"Bid price cannot exceed Ask price. Invalid pairs: {invalid_pairs}"
@@ -245,7 +245,7 @@ class DataLoader:
             invalid_mids = (
                 df[mid_diff > tolerance][["bid", "ask", "mid"]]
                 .head()
-                .to_dict("records")
+                .to_dict("records")  # type: ignore[arg-type]
             )
             error_msg = (
                 f"Mid price should be (bid + ask) / 2. Invalid rows: {invalid_mids}"
