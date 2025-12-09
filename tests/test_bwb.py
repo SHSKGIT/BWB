@@ -1,6 +1,7 @@
 import pytest
 import pandas as pd
 from modules.call_spread import BrokenWingButterflyCallSpread
+from modules.data_loader import DataLoader
 from config import get_logger
 
 logger = get_logger(__name__)
@@ -128,3 +129,119 @@ def test_rank_spreads(bwb_call_spread_instance):
     assert pytest.approx(row["max_profit"], 0.1) == 5.5
     assert pytest.approx(row["max_loss"], 0.1) == 4.5
     assert pytest.approx(row["score"], 0.01) == 1.22
+
+
+# ========== NEW ADDED EDGE CASES & ERROR HANDLING TESTS ==========
+
+
+def test_data_loader_missing_columns():
+    invalid_data = pd.DataFrame({"symbol": ["AAPL"], "strike": [100]})
+    loader = DataLoader()
+    with pytest.raises(ValueError, match="Missing required columns"):
+        loader._validate_columns(invalid_data)
+
+
+def test_data_loader_null_values():
+    data_with_nulls = pd.DataFrame(TEST_DATA)
+    data_with_nulls.loc[0, "strike"] = None
+    loader = DataLoader()
+    with pytest.raises(ValueError, match="Null values found"):
+        loader._validate_no_nulls(data_with_nulls)
+
+
+def test_data_loader_invalid_delta():
+    invalid_data = pd.DataFrame(TEST_DATA)
+    invalid_data.loc[0, "delta"] = 1.5
+    loader = DataLoader()
+    with pytest.raises(ValueError, match="Delta values must be between 0 and 1"):
+        loader._validate_business_rules(invalid_data)
+
+
+def test_data_loader_bid_exceeds_ask():
+    invalid_data = pd.DataFrame(TEST_DATA)
+    invalid_data.loc[0, "bid"] = 10.0
+    invalid_data.loc[0, "ask"] = 5.0
+    loader = DataLoader()
+    with pytest.raises(ValueError, match="Bid price cannot exceed Ask price"):
+        loader._validate_business_rules(invalid_data)
+
+
+def test_generate_call_spreads_empty_dataframe():
+    with pytest.raises(ValueError, match="DataFrame cannot be empty"):
+        BrokenWingButterflyCallSpread(pd.DataFrame())
+
+
+def test_generate_call_spreads_invalid_ticker():
+    bwb = BrokenWingButterflyCallSpread(pd.DataFrame(TEST_DATA))
+    with pytest.raises(ValueError, match="Ticker must be a non-empty string"):
+        bwb.generate_call_spreads("", "2025-11-15")
+
+
+def test_generate_call_spreads_insufficient_strikes():
+    limited_data = pd.DataFrame(
+        {
+            "symbol": ["AAPL"] * 2,
+            "expiry": ["2025-11-15"] * 2,
+            "dte": [8] * 2,
+            "strike": [100, 105],
+            "type": ["call"] * 2,
+            "bid": [7.20, 4.80],
+            "ask": [7.30, 4.90],
+            "mid": [7.25, 4.85],
+            "delta": [0.30, 0.20],
+            "iv": [0.15] * 2,
+        }
+    )
+    limited_data["expiry"] = pd.to_datetime(limited_data["expiry"])
+    bwb = BrokenWingButterflyCallSpread(limited_data)
+    result = bwb.generate_call_spreads("AAPL", "2025-11-15")
+    assert result.empty
+
+
+def test_filter_spreads_invalid_parameters():
+    bwb = BrokenWingButterflyCallSpread(pd.DataFrame(TEST_DATA))
+    spreads = pd.DataFrame([{"dte": 5, "delta_k2": 0.25, "cost": -0.5}])
+
+    # Test min_dte > max_dte
+    with pytest.raises(ValueError, match="min_dte.*cannot exceed max_dte"):
+        bwb.filter_spreads(spreads, min_dte=10, max_dte=5)
+
+    # Test invalid delta range
+    with pytest.raises(
+        ValueError, match="min_short_delta.*cannot exceed max_short_delta"
+    ):
+        bwb.filter_spreads(spreads, min_short_delta=0.5, max_short_delta=0.2)
+
+
+def test_rank_spreads_negative_widths():
+    bwb = BrokenWingButterflyCallSpread(pd.DataFrame(TEST_DATA))
+    invalid_spreads = pd.DataFrame([{"width1": -5, "width2": 10, "cost": -0.5}])
+
+    with pytest.raises(ValueError, match="Widths must be non-negative"):
+        bwb.rank_spreads(invalid_spreads)
+
+
+def test_full_pipeline_integration(bwb_call_spread_instance):
+    ticker = "AAPL"
+    expiry = "2025-11-15"
+
+    # Generate
+    spreads = bwb_call_spread_instance.generate_call_spreads(ticker, expiry)
+    assert not spreads.empty
+    assert "width1" in spreads.columns
+    assert "width2" in spreads.columns
+    assert "cost" in spreads.columns
+
+    # Filter
+    filtered = bwb_call_spread_instance.filter_spreads(spreads)
+    assert len(filtered) <= len(spreads)
+    assert not filtered.empty
+
+    # Rank
+    ranked = bwb_call_spread_instance.rank_spreads(filtered)
+    assert len(ranked) == len(filtered)
+    assert "score" in ranked.columns
+
+    # Validate sorting (should be descending by score)
+    if len(ranked) > 1:
+        assert ranked["score"].is_monotonic_decreasing
